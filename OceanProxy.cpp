@@ -5,8 +5,11 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <pthread.h>
 
 #include <argparse/argparse.hpp>
+
+#define DEFAULT_PORT 8000
 
 
 struct {
@@ -24,7 +27,7 @@ void populateSettingFromParser(argparse::ArgumentParser &parser) {
     proxySettings.block_plain_HTTP = parser.get<bool>("-s");
     proxySettings.cache_folder = parser.get<std::string>("-c");
     proxySettings.log_file = parser.get<std::string>("-l");
-    proxySettings.debug = parser.get<std::string>("-d");
+    proxySettings.debug = parser.get<bool>("-d");
     proxySettings.blocked_domains_file = parser.get<std::string>("-b");
 }
 
@@ -33,7 +36,7 @@ void parseArguments(int argc, char *argv[]) {
 
     parser.add_argument("-p", "--port")
         .help("Port of the HTTP Proxy server")
-        .default_value(8000)
+        .default_value(DEFAULT_PORT)
         .scan<'i', int>();
 
     parser.add_argument("-s", "--block-plain-http")
@@ -53,7 +56,7 @@ void parseArguments(int argc, char *argv[]) {
 
     
     parser.add_argument("-d", "--debug")
-        .help("Print debugging information to the console");
+        .help("Print debugging information to the console")
         .default_value(true)
         .implicit_value(true);
 
@@ -67,12 +70,30 @@ void parseArguments(int argc, char *argv[]) {
 }
 
 
+struct serverThreadArgs {
+    struct sockaddr_in client_address;
+    int client_socket;
+
+    //TODO: other args
+};
+
+
+void* initProxyServer(void* args) {
+    /*HTTPProxyServer server = new HTTPProxyServer(server_args.client_address, 
+                                server_args.client_socket, proxySettings);
+    server.processRequest(); */
+
+    std::cout << "Connection" << std::endl;
+    return nullptr;
+}
+
+
 int main(int argc, char *argv[]) {
     // TO-DO:
     // 1. parse args. Done!
     // 2. open files. Done!
     // 3. open a TCP port (listen). Done!
-    // 4. create a new thread (HttpProxyServer) for each connection.
+    // 4. create a new thread (HTTPProxyServer) for each connection. Done!
 
     try {
         parseArguments(argc, argv);
@@ -105,7 +126,6 @@ int main(int argc, char *argv[]) {
     }
 
 
-
     int socket_fd = socket(AF_INET, SOCK_STREAM, 0);
 
     if(socket_fd == -1) {
@@ -116,12 +136,12 @@ int main(int argc, char *argv[]) {
 
     struct sockaddr_in address; 
 
-    addr.sin_family = AF_INET;
-    addr.sin_port   = htons(proxySettings.port);
-    addr.sin_addr.s_addr = INADDR_ANY;
+    address.sin_family = AF_INET;
+    address.sin_port = htons(proxySettings.port);
+    address.sin_addr.s_addr = INADDR_ANY;
 
 
-    if(bind(socket_fd, (struct sockaddr *)&addr, sizeof addr) < 0) {
+    if(bind(socket_fd, (struct sockaddr *)&address, sizeof address) < 0) {
         std::cerr << "Error Binding the TCP Socket" << std::endl;
         close(socket_fd);
         return 4;
@@ -137,15 +157,25 @@ int main(int argc, char *argv[]) {
 
     while(true) {
         socklen_t size;
-        struct sockaddr_in newaddr;
+        struct sockaddr_in client_address;
 
-        client_socket = accept(socket_fd, (struct sockaddr *)&newaddr, &size);
+        int client_socket = accept(socket_fd, (struct sockaddr *)&client_address, &size);
         if(client_socket == -1) {
             std::cerr << "Error Accepting the client connection" << std::endl;
             continue;
         }
 
+        serverThreadArgs args;
+        args.client_address = client_address;
+        args.client_socket = client_socket;
 
+        pthread_t server_thread;
+        int thread = pthread_create(&server_thread, NULL, &initProxyServer, &args);
+
+        if(thread != 0) {
+            std::cerr << "Error Creating server thread" << std::endl;
+            close(client_socket);
+        }
     }
 
     close(socket_fd);
