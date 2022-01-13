@@ -1,5 +1,6 @@
 #include <string>
 #include <fstream>
+#include <utility>
 #include <arpa/inet.h>
 #include <netdb.h>
 #include <sys/socket.h>
@@ -8,6 +9,8 @@
 #include <pthread.h>
 
 #include <argparse/argparse.hpp>
+
+#include "HTTPProxyServer.h"
 
 #define DEFAULT_PORT 8000
 
@@ -19,16 +22,16 @@ struct {
     std::string log_file;
     bool debug;
     std::string blocked_domains_file;
-} proxySettings;
+} proxyArgs;
 
 
 void populateSettingFromParser(argparse::ArgumentParser &parser) {
-    proxySettings.port = parser.get<int>("port");
-    proxySettings.block_plain_HTTP = parser.get<bool>("-s");
-    proxySettings.cache_folder = parser.get<std::string>("-c");
-    proxySettings.log_file = parser.get<std::string>("-l");
-    proxySettings.debug = parser.get<bool>("-d");
-    proxySettings.blocked_domains_file = parser.get<std::string>("-b");
+    proxyArgs.port = parser.get<int>("port");
+    proxyArgs.block_plain_HTTP = parser.get<bool>("-s");
+    proxyArgs.cache_folder = parser.get<std::string>("-c");
+    proxyArgs.log_file = parser.get<std::string>("-l");
+    proxyArgs.debug = parser.get<bool>("-d");
+    proxyArgs.blocked_domains_file = parser.get<std::string>("-b");
 }
 
 void parseArguments(int argc, char *argv[]) {
@@ -70,31 +73,15 @@ void parseArguments(int argc, char *argv[]) {
 }
 
 
-struct serverThreadArgs {
-    struct sockaddr_in client_address;
-    int client_socket;
-
-    //TODO: other args
-};
-
-
 void* initProxyServer(void* args) {
-    /*HTTPProxyServer server = new HTTPProxyServer(server_args.client_address, 
-                                server_args.client_socket, proxySettings);
-    server.processRequest(); */
-
-    std::cout << "Connection" << std::endl;
-    return nullptr;
+    ProxyServerSettings* server_settings = (ProxyServerSettings*) args;
+    HTTPProxyServer* server = new HTTPProxyServer(server_settings);
+    //server->processRequest();
+    return 0;
 }
 
 
 int main(int argc, char *argv[]) {
-    // TO-DO:
-    // 1. parse args. Done!
-    // 2. open files. Done!
-    // 3. open a TCP port (listen). Done!
-    // 4. create a new thread (HTTPProxyServer) for each connection. Done!
-
     try {
         parseArguments(argc, argv);
     } catch (const std::runtime_error& err) {
@@ -103,23 +90,23 @@ int main(int argc, char *argv[]) {
     }
 
     
-    std::fstream log_file;
+    std::fstream* log_file = new std::fstream();
 
-    if (!proxySettings.log_file.empty()) {
-        log_file.open(proxySettings.log_file, std::ios::app);
+    if (!proxyArgs.log_file.empty()) {
+        log_file->open(proxyArgs.log_file, std::ios::app);
 
-        if(!log_file) {
+        if(!*(log_file)) {
             std::cerr << "Invalid log file" << std::endl;
             return 2;
         }
     }
 
-    std::fstream blocked_domains_file;
+    std::fstream* blocked_domains_file = new std::fstream();
 
-    if (!proxySettings.blocked_domains_file.empty()) {
-        blocked_domains_file.open(proxySettings.blocked_domains_file, std::ios::in);
+    if (!proxyArgs.blocked_domains_file.empty()) {
+        blocked_domains_file->open(proxyArgs.blocked_domains_file, std::ios::in);
 
-        if(!blocked_domains_file) {
+        if(!*(blocked_domains_file)) {
             std::cerr << "Invalid blocked domains file" << std::endl;
             return 2;
         }
@@ -137,7 +124,7 @@ int main(int argc, char *argv[]) {
     struct sockaddr_in address; 
 
     address.sin_family = AF_INET;
-    address.sin_port = htons(proxySettings.port);
+    address.sin_port = htons(proxyArgs.port);
     address.sin_addr.s_addr = INADDR_ANY;
 
 
@@ -165,12 +152,15 @@ int main(int argc, char *argv[]) {
             continue;
         }
 
-        serverThreadArgs args;
-        args.client_address = client_address;
-        args.client_socket = client_socket;
+        ProxyServerSettings server_settings;
+        server_settings.client_address = client_address;
+        server_settings.client_socket = client_socket;
+        server_settings.cache_folder = proxyArgs.cache_folder;
+        server_settings.log_file = log_file;
+        server_settings.blocked_domains_file = blocked_domains_file;
 
         pthread_t server_thread;
-        int thread = pthread_create(&server_thread, NULL, &initProxyServer, &args);
+        int thread = pthread_create(&server_thread, NULL, &initProxyServer, &server_settings);
 
         if(thread != 0) {
             std::cerr << "Error Creating server thread" << std::endl;
